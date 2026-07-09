@@ -10,6 +10,13 @@ base class rcldart_msgs__srv__GetDistance_Request extends ffi.Struct {
   external rosidl_runtime_c__String to_frame;
 }
 
+final class rcldart_msgs__srv__GetDistance_Request__Sequence extends ffi.Struct {
+  external ffi.Pointer<rcldart_msgs__srv__GetDistance_Request> data;
+  @ffi.Size()
+  external int size;
+  @ffi.Size()
+  external int capacity;
+}
 class RcldartMsgsGetDistance_Request extends BaseRosMessage<rcldart_msgs__srv__GetDistance_Request> {
   @override
   String get typeName => 'GetDistance_Request';
@@ -54,6 +61,13 @@ base class rcldart_msgs__srv__GetDistance_Response extends ffi.Struct {
   external bool success;
 }
 
+final class rcldart_msgs__srv__GetDistance_Response__Sequence extends ffi.Struct {
+  external ffi.Pointer<rcldart_msgs__srv__GetDistance_Response> data;
+  @ffi.Size()
+  external int size;
+  @ffi.Size()
+  external int capacity;
+}
 class RcldartMsgsGetDistance_Response extends BaseRosMessage<rcldart_msgs__srv__GetDistance_Response> {
   @override
   String get typeName => 'GetDistance_Response';

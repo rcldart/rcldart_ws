@@ -16,6 +16,13 @@ base class rcldart_msgs__msg__RobotStatus extends ffi.Struct {
   external rosidl_runtime_c__double__Sequence joint_positions;
 }
 
+final class rcldart_msgs__msg__RobotStatus__Sequence extends ffi.Struct {
+  external ffi.Pointer<rcldart_msgs__msg__RobotStatus> data;
+  @ffi.Size()
+  external int size;
+  @ffi.Size()
+  external int capacity;
+}
 class RcldartMsgsRobotStatus extends BaseRosMessage<rcldart_msgs__msg__RobotStatus> {
   @override
   String get typeName => 'RobotStatus';

@@ -35,6 +35,11 @@ else
 fi
 
 echo "== 2. generate Dart packages (deps auto-resolved) =="
+# Search the workspace's built packages (install/<pkg>/share) first, then the
+# system distro — so custom src/ packages AND upstream deps both resolve.
+DISTRO_SHARE="/opt/ros/${ROS_DISTRO:-jazzy}/share"
+WS_SHARES="$(printf '%s:' "$WS"/install/*/share 2>/dev/null)"
+export SHARE_ROOT="${WS_SHARES}${DISTRO_SHARE}"
 python3 "$GEN" "$WS/dart" "${PKGS[@]}"
 
 echo "== 3. inject dependency_overrides into apps/* =="
