@@ -1,0 +1,6 @@
+# Request a distance between two named frames.
+string from_frame
+string to_frame
+---
+float64 distance
+bool success

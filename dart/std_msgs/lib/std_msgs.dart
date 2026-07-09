@@ -1,0 +1,33 @@
+// std_msgs — generated Dart bindings
+library;
+
+export 'src/bool.dart';
+export 'src/byte.dart';
+export 'src/byte_multi_array.dart';
+export 'src/char.dart';
+export 'src/color_rgba.dart';
+export 'src/empty.dart';
+export 'src/float32.dart';
+export 'src/float32_multi_array.dart';
+export 'src/float64.dart';
+export 'src/float64_multi_array.dart';
+export 'src/header.dart';
+export 'src/int16.dart';
+export 'src/int16_multi_array.dart';
+export 'src/int32.dart';
+export 'src/int32_multi_array.dart';
+export 'src/int64.dart';
+export 'src/int64_multi_array.dart';
+export 'src/int8.dart';
+export 'src/int8_multi_array.dart';
+export 'src/multi_array_dimension.dart';
+export 'src/multi_array_layout.dart';
+export 'src/string.dart';
+export 'src/u_int16.dart';
+export 'src/u_int16_multi_array.dart';
+export 'src/u_int32.dart';
+export 'src/u_int32_multi_array.dart';
+export 'src/u_int64.dart';
+export 'src/u_int64_multi_array.dart';
+export 'src/u_int8.dart';
+export 'src/u_int8_multi_array.dart';

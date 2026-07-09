@@ -1,0 +1,31 @@
+// sensor_msgs — generated Dart bindings
+library;
+
+export 'src/battery_state.dart';
+export 'src/camera_info.dart';
+export 'src/channel_float32.dart';
+export 'src/compressed_image.dart';
+export 'src/fluid_pressure.dart';
+export 'src/illuminance.dart';
+export 'src/image.dart';
+export 'src/imu.dart';
+export 'src/joint_state.dart';
+export 'src/joy.dart';
+export 'src/joy_feedback.dart';
+export 'src/joy_feedback_array.dart';
+export 'src/laser_echo.dart';
+export 'src/laser_scan.dart';
+export 'src/magnetic_field.dart';
+export 'src/multi_dof_joint_state.dart';
+export 'src/multi_echo_laser_scan.dart';
+export 'src/nav_sat_fix.dart';
+export 'src/nav_sat_status.dart';
+export 'src/point_cloud.dart';
+export 'src/point_cloud2.dart';
+export 'src/point_field.dart';
+export 'src/range.dart';
+export 'src/region_of_interest.dart';
+export 'src/relative_humidity.dart';
+export 'src/set_camera_info.dart';
+export 'src/temperature.dart';
+export 'src/time_reference.dart';

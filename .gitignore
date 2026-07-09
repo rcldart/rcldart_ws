@@ -1,0 +1,29 @@
+# colcon build artifacts
+/build/
+/install/
+/log/
+
+# Dart / Flutter build artifacts (per package & per app)
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/ephemeral/
+**/generated_plugin_registrant.*
+**/GeneratedPluginRegistrant.*
+
+# editor / OS
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# Android bundled ROS closure (large, machine-generated) — keep folders
+apps/*/android/app/src/main/jniLibs/**/*.so
+
+# Apple bundled ROS closure (large, machine-generated)
+apps/*/ios/ros/
+apps/*/macos/ros/
+
+# generated Dart consumability checks
+dart/_check/.dart_tool/

@@ -1,0 +1,35 @@
+// geometry_msgs — generated Dart bindings
+library;
+
+export 'src/accel.dart';
+export 'src/accel_stamped.dart';
+export 'src/accel_with_covariance.dart';
+export 'src/accel_with_covariance_stamped.dart';
+export 'src/inertia.dart';
+export 'src/inertia_stamped.dart';
+export 'src/point.dart';
+export 'src/point32.dart';
+export 'src/point_stamped.dart';
+export 'src/polygon.dart';
+export 'src/polygon_instance.dart';
+export 'src/polygon_instance_stamped.dart';
+export 'src/polygon_stamped.dart';
+export 'src/pose.dart';
+export 'src/pose2_d.dart';
+export 'src/pose_array.dart';
+export 'src/pose_stamped.dart';
+export 'src/pose_with_covariance.dart';
+export 'src/pose_with_covariance_stamped.dart';
+export 'src/quaternion.dart';
+export 'src/quaternion_stamped.dart';
+export 'src/transform.dart';
+export 'src/transform_stamped.dart';
+export 'src/twist.dart';
+export 'src/twist_stamped.dart';
+export 'src/twist_with_covariance.dart';
+export 'src/twist_with_covariance_stamped.dart';
+export 'src/vector3.dart';
+export 'src/vector3_stamped.dart';
+export 'src/velocity_stamped.dart';
+export 'src/wrench.dart';
+export 'src/wrench_stamped.dart';

@@ -1,0 +1,22 @@
+name: nav_msgs
+description: Generated Dart bindings for the nav_msgs ROS 2 interfaces.
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  ffi: ^2.1.0
+  rcldart_utils:
+    git:
+      url: https://github.com/rcldart/rcldart_utils.git
+  builtin_interfaces:
+    git:
+      url: https://github.com/rcldart/builtin_interfaces.git
+  geometry_msgs:
+    git:
+      url: https://github.com/rcldart/geometry_msgs.git
+  std_msgs:
+    git:
+      url: https://github.com/rcldart/std_msgs.git
