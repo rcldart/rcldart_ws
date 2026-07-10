@@ -1,0 +1,22 @@
+name: ros2_cdr
+description: >-
+  Pure-Dart ROS 2 CDR (XCDR1) codec + .msg schema parser. Encodes/decodes ROS 2
+  messages to/from plain Dart maps with NO native code, NO rosidl typesupport,
+  and NO ROS install — the serialization half of a dependency-minimal ROS 2
+  client. Shared by the dds_direct (CycloneDDS-FFI) and zenoh_ros2 clients.
+version: 0.1.0
+homepage: https://github.com/harunkurtdev/rcldart
+repository: https://github.com/harunkurtdev/rcldart
+issue_tracker: https://github.com/harunkurtdev/rcldart/issues
+
+topics:
+  - ros2
+  - cdr
+  - serialization
+  - robotics
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dev_dependencies:
+  test: ^1.24.0

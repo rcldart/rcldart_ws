@@ -33,6 +33,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   path_provider: ^2.1.0
   ffi: ^2.1.0
+  web_socket_channel: ^3.0.0
+  dds_direct:
+    path: ../dds_direct
   rcldart:
     path: ../../..
   rcldart_utils:

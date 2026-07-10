@@ -7,8 +7,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
   dds_direct
-  jni
-  rcldart
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

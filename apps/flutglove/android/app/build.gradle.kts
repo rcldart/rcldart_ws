@@ -28,8 +28,8 @@ android {
         // Only bundle ABIs the ROS 2 closure was cross-compiled for (see
         // rcldart/android/src/main/jniLibs). arm64-v8a = real devices.
         ndk {
-            abiFilters += listOf("arm64-v8a")
-            // abiFilters += listOf("arm64-v8a", "x86_64") // + emulator
+            // arm64-v8a = real devices; x86_64 = emulator.
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
 

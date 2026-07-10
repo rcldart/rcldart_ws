@@ -1,0 +1,25 @@
+name: flutglove_dds
+description: >-
+  A minimal Foxglove-style ROS 2 visualizer that pulls the live graph DIRECTLY
+  over CycloneDDS — no bridge, no WebSocket, no ROS install. Built entirely on the
+  dds_direct (CycloneDDS-FFI) + ros2_cdr layer, as a second, simpler frontend over
+  the same DDS core.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dds_direct:
+    path: ../dds_direct
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

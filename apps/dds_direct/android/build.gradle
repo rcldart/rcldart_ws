@@ -1,0 +1,56 @@
+// Android Gradle build for the dds_direct FFI plugin — the AGP compiles the
+// shared src/ CMake (which FetchContents CycloneDDS) with the NDK and packs the
+// resulting .so's into the app's jniLibs automatically.
+group = "com.rcldart.dds_direct"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.1.0")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    if (project.android.hasProperty("namespace")) {
+        namespace = "com.rcldart.dds_direct"
+    }
+    compileSdk = 34
+    ndkVersion = android.ndkVersion
+
+    externalNativeBuild {
+        cmake {
+            path = "../src/CMakeLists.txt"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    defaultConfig {
+        minSdk = 24 // CycloneDDS/rcl need API 24+ (pthread_attr_setinheritsched)
+        externalNativeBuild {
+            cmake {
+                // Android has no --no-undefined-friendly ROS runtime; allow it.
+                arguments "-DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE"
+            }
+        }
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+}

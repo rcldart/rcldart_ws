@@ -1,0 +1,21 @@
+name: zenoh_ros2_example
+description: Demo of zenoh_ros2 — subscribe/publish ROS 2 topics over Zenoh.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  zenoh_ros2:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

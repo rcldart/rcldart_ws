@@ -1,0 +1,27 @@
+name: flutglove_foxglove
+description: >-
+  A minimal ROS 2 subscribe+publish frontend over the FOXGLOVE WebSocket bridge.
+  Same tabbed architecture as flutglove_dds; discovery + schemas come from the
+  bridge, publish serializes with ros2_cdr. One outbound TCP, crosses NAT, no ROS.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  web_socket_channel: ^3.0.0
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/ros_schemas.json

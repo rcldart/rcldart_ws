@@ -10,7 +10,7 @@
 //    a `configById` map of per-panel settings (type + topic + field).
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File, Platform;
+import 'dart:io' show File, Platform, ProcessSignal, exit;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -19,6 +19,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:path_provider/path_provider.dart';
 import 'package:rcldart/rcldart.dart' as ros;
+import 'package:std_msgs/std_msgs.dart';
+
+import 'dds_hub.dart';
+import 'foxglove_ws.dart';
+import 'topic_source.dart';
 
 // ---------------------------------------------------------------------------
 // Layout model — a binary mosaic tree + per-panel config, keyed by panel id.
@@ -161,14 +166,81 @@ class LayoutModel extends ChangeNotifier {
 // App state
 // ---------------------------------------------------------------------------
 late ros.Node _node;
-late ros.DynamicTopicHub _hub;
+ros.Node? _activeNode; // the live node, so we can rcl_node_fini it cleanly
+late TopicSource _hub;
+bool _hubInited = false;
 final _layout = LayoutModel();
 
-const int _domainId = 0;
-const List<String> _peers = <String>[];
-// rmw to use on iOS/macOS — must match what tool/build_ros2_apple.sh bundled
-// (RMW=fastrtps → 'rmw_fastrtps_cpp', RMW=cyclonedds → 'rmw_cyclonedds_cpp').
+// rmw to use on iOS/macOS — must match what tool/build_ros2_apple.sh bundled.
 const String _appleRmw = 'rmw_fastrtps_cpp';
+
+/// Editable ROS connection settings — the DDS domain and the explicit peer
+/// host(s) to discover. On a phone put your computer's LAN IP here; from an
+/// Android emulator the host is reachable at 10.0.2.2 (but DDS-over-NAT is
+/// limited — a real device on the same Wi-Fi is the reliable path).
+class ConnConfig {
+  int domainId;
+
+  /// The peer/endpoint hosts. Meaning depends on [transport]:
+  ///  * dds      → DDS unicast peer hosts (who we discover AND who can see us);
+  ///  * zenoh    → Zenoh router hosts;
+  ///  * foxglove → the `foxglove_bridge` host (usually just one).
+  List<String> peers;
+
+  /// Transport: `dds` (native rcl), `zenoh` (rmw_zenoh router), or `foxglove`
+  /// (WebSocket bridge — the reliable path over NAT / with no closure).
+  String transport;
+
+  ConnConfig({this.domainId = 0, this.peers = const [], this.transport = 'dds'});
+
+  bool get useZenoh => transport == 'zenoh';
+  bool get useFoxglove => transport == 'foxglove';
+  bool get useCyclone => transport == 'cyclonedds';
+
+  /// Zenoh router endpoints (`tcp/host:7447`), derived from [peers] — a bare
+  /// host/IP gets the `tcp/` scheme and default port 7447.
+  List<String> get zenohEndpoints => peers.map((p) {
+        if (p.contains('/')) return p; // already a full endpoint
+        return p.contains(':') ? 'tcp/$p' : 'tcp/$p:7447';
+      }).toList();
+
+  /// The Foxglove bridge WebSocket URL from the first peer entry. A bare host
+  /// gets `ws://host:8765`; `host:port` and full `ws://…` are respected.
+  String get foxgloveUrl {
+    final p = peers.isEmpty ? '' : peers.first.trim();
+    if (p.isEmpty) return 'ws://127.0.0.1:8765';
+    if (p.startsWith('ws://') || p.startsWith('wss://')) return p;
+    return p.contains(':') ? 'ws://$p' : 'ws://$p:8765';
+  }
+
+  Map<String, Object?> toJson() =>
+      {'domain': domainId, 'peers': peers, 'transport': transport};
+  factory ConnConfig.fromJson(Map<String, Object?> j) => ConnConfig(
+        domainId: (j['domain'] as num?)?.toInt() ?? 0,
+        peers: ((j['peers'] as List?) ?? const []).map((e) => '$e').toList(),
+        // Back-compat: old configs stored a `zenoh` bool.
+        transport: (j['transport'] as String?) ??
+            ((j['zenoh'] as bool? ?? false) ? 'zenoh' : 'dds'),
+      );
+
+  static Future<File> _file() async =>
+      File('${(await getApplicationDocumentsDirectory()).path}/flutglove_conn.json');
+  static Future<ConnConfig> load() async {
+    try {
+      final f = await _file();
+      if (await f.exists()) {
+        return ConnConfig.fromJson(jsonDecode(await f.readAsString()) as Map<String, Object?>);
+      }
+    } catch (_) {}
+    return ConnConfig();
+  }
+
+  Future<void> save() async => (await _file()).writeAsString(jsonEncode(toJson()));
+}
+
+final ConnConfig _conn = ConnConfig();
+final ValueNotifier<int> _connRev = ValueNotifier<int>(0); // bump to redraw status
+final List<Timer> _rosTimers = [];
 
 // --- Foxglove-like palette + shell state ------------------------------------
 class Fx {
@@ -194,6 +266,11 @@ final ValueNotifier<int> _sidebarTab = ValueNotifier<int>(0);
 /// Rough message throughput counter (sampled by the status bar).
 int _msgTick = 0;
 
+/// Whether rcl came up. When false, the ROS runtime isn't available (e.g. no
+/// closure bundled yet) and the UI shows a message instead of the panel shell.
+bool _rosReady = false;
+String? _rosError;
+
 class PanelType {
   final String id;
   final String label;
@@ -212,47 +289,197 @@ IconData _iconFor(String type) =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  if (Platform.isAndroid) {
-    const ch = MethodChannel('rcldart/android');
-    final libDir = await ch.invokeMethod<String>('nativeLibDir');
-    final ament = await ch.invokeMethod<String>('amentPrefixPath');
-    ros.AndroidRosBootstrap.prepare(
-        nativeLibDir: libDir, amentPrefixPath: ament, domainId: _domainId, peers: _peers);
-    ros.RclDart().init();
-  } else if (Platform.isIOS || Platform.isMacOS) {
-    // No ROS on the device: the runtime dylibs + ament index are bundled in the
-    // app (see docs/apple_ros2_architecture.md). Fetch the embedded ament path
-    // from the native host and wire it before init. Falls back to a system ROS
-    // (dev Mac) when no bundle is present.
-    const ch = MethodChannel('rcldart/apple');
-    final ament = await ch.invokeMethod<String>('amentPrefixPath');
-    if (ament != null && ament.isNotEmpty) {
-      ros.AppleRosBootstrap.prepare(
-          amentPrefixPath: ament,
-          domainId: _domainId,
-          rmwImplementation: _appleRmw,
-          peers: _peers);
-      ros.RclDart().init();
-    } else {
-      ros.RclDart().init(ros.RosConfig(domainId: _domainId));
-    }
-  } else {
-    ros.RclDart().init(
-        ros.RosConfig(domainId: _domainId, rmwImplementation: 'rmw_cyclonedds_cpp'));
+  final saved = await ConnConfig.load();
+  _conn
+    ..domainId = saved.domainId
+    ..peers = saved.peers
+    ..transport = saved.transport;
+  await _bringUpRos();
+  // Clean ROS teardown on quit so rcl finalizes the node then the context in
+  // order — otherwise rcl logs "Not all nodes were finished before finishing
+  // the context" and CycloneDDS aborts (`terminate called`) at process exit.
+  //
+  // Two hooks, because they fire in different situations:
+  //  * onDetach   — graceful Flutter engine shutdown (e.g. window close).
+  //  * SIGINT/TERM — `flutter run` `q`, Ctrl-C, or a kill; on desktop this is
+  //    what actually arrives first, so it's the reliable one. We tear down then
+  //    exit(0) so the process leaves cleanly.
+  _lifecycle = AppLifecycleListener(onDetach: _teardownRos);
+  for (final sig in [ProcessSignal.sigint, ProcessSignal.sigterm]) {
+    try {
+      sig.watch().listen((_) {
+        _teardownRos();
+        exit(0);
+      });
+    } catch (_) {/* signal not watchable on this platform */}
   }
-
-  _node = ros.RclDart().createNode('flutglove', 'flutglove');
-  _hub = ros.DynamicTopicHub(_node)..refreshGraph();
-  // Drain subscriptions fast for smooth data.
-  Timer.periodic(const Duration(milliseconds: 16), (_) => _hub.spinOnce());
-  // Discovery keeps arriving after startup — re-scan the graph periodically so
-  // topics that appear later show up in the pickers automatically.
-  Timer.periodic(const Duration(milliseconds: 1200), (_) {
-    _hub.refreshGraph();
-    _layout.update();
-  });
   runApp(const FlutgloveApp());
+}
+
+AppLifecycleListener? _lifecycle;
+bool _tornDown = false;
+
+/// Cancels timers and finalizes the ROS runtime in the correct order:
+/// hub → node → context. Best-effort; never throws.
+void _teardownRos() {
+  if (_tornDown) return;
+  _tornDown = true;
+  for (final t in _rosTimers) {
+    t.cancel();
+  }
+  _rosTimers.clear();
+  if (_hubInited) {
+    try {
+      _hub.dispose();
+    } catch (_) {}
+    _hubInited = false;
+  }
+  if (_activeNode != null) {
+    try {
+      _activeNode!.dispose();
+    } catch (_) {}
+    _activeNode = null;
+  }
+  try {
+    ros.RclDart().shutdown();
+  } catch (_) {}
+  debugPrint('flutglove: ROS teardown complete');
+}
+
+/// (Re)initializes ROS from the current [_conn] and rebuilds the node/hub/timers.
+/// Safe to call again at runtime to apply edited connection settings.
+Future<void> _bringUpRos() async {
+  _rosReady = false;
+  _rosError = null;
+  for (final t in _rosTimers) {
+    t.cancel();
+  }
+  _rosTimers.clear();
+  if (_hubInited) {
+    try {
+      _hub.dispose();
+    } catch (_) {}
+  }
+  // Finalize the previous node BEFORE reinitialize() finis the context —
+  // otherwise rcl leaks the node and DDS can abort at teardown.
+  if (_activeNode != null) {
+    try {
+      _activeNode!.dispose();
+    } catch (_) {}
+    _activeNode = null;
+  }
+  try {
+    // --- Foxglove WebSocket bridge: no rcl, no closure, crosses NAT. --------
+    // One outbound TCP to `foxglove_bridge` on the computer surfaces every
+    // topic. This is the reliable path from the Android emulator (DDS-over-NAT
+    // can't complete the discovery handshake) and needs no bundled ROS.
+    if (_conn.useFoxglove) {
+      final fg = FoxgloveWsHub(_conn.foxgloveUrl)
+        ..onGraphChanged = () {
+          _connRev.value++;
+          _layout.update();
+        };
+      _hub = fg;
+      _hubInited = true;
+      await fg.connect();
+      _rosReady = fg.connected;
+      if (!fg.connected) _rosError = fg.status;
+      _connRev.value++;
+      return;
+    }
+
+    // --- CycloneDDS (direct): pull the live ROS 2 graph straight off DDS. ----
+    // No rcl, no bridge, no WebSocket — the dds_direct plugin links CycloneDDS,
+    // discovers the graph over DCPSPublication, and decodes with pure-Dart CDR
+    // using the bundled .msg schema registry.
+    if (_conn.useCyclone) {
+      final hub = await DdsDirectHub.create(domain: _conn.domainId);
+      _hub = hub;
+      _hubInited = true;
+      _rosReady = true;
+      // Keep the topic list fresh as publishers come and go.
+      _rosTimers.add(Timer.periodic(const Duration(milliseconds: 1500), (_) {
+        hub.refreshGraph();
+        _layout.update();
+        _connRev.value++;
+      }));
+      _connRev.value++;
+      return;
+    }
+
+    if (Platform.isAndroid) {
+      String? libDir, ament;
+      try {
+        const ch = MethodChannel('rcldart/android');
+        libDir = await ch.invokeMethod<String>('nativeLibDir');
+        ament = await ch.invokeMethod<String>('amentPrefixPath');
+      } catch (_) {/* host channel not ready */}
+      ros.AndroidRosBootstrap.prepare(
+          nativeLibDir: libDir,
+          amentPrefixPath: ament,
+          domainId: _conn.domainId,
+          peers: _conn.useZenoh ? const [] : _conn.peers,
+          zenohConnect: _conn.useZenoh ? _conn.zenohEndpoints : const []);
+      ros.RclDart().reinitialize(); // env (CYCLONEDDS/ZENOH) already set
+    } else if (Platform.isIOS || Platform.isMacOS) {
+      const ch = MethodChannel('rcldart/apple');
+      final ament = await ch.invokeMethod<String>('amentPrefixPath');
+      final cfg = _conn.useZenoh
+          ? ros.RosConfig(
+              domainId: _conn.domainId,
+              amentPrefixPath: ament,
+              zenohConnect: _conn.zenohEndpoints)
+          : ros.RosConfig(
+              domainId: _conn.domainId,
+              amentPrefixPath: ament,
+              rmwImplementation: _appleRmw,
+              staticPeers: _conn.peers);
+      ros.RclDart().reinitialize(cfg);
+    } else {
+      // Linux desktop: talk to the system ROS.
+      ros.RclDart().reinitialize(_conn.useZenoh
+          ? ros.RosConfig(domainId: _conn.domainId, zenohConnect: _conn.zenohEndpoints)
+          : ros.RosConfig(
+              domainId: _conn.domainId,
+              rmwImplementation: 'rmw_cyclonedds_cpp',
+              staticPeers: _conn.peers));
+    }
+
+    _node = ros.RclDart().createNode('flutglove', 'flutglove');
+    _activeNode = _node;
+    try {
+      final hb = _node.createPublisher(
+          topic_name: '/flutglove/heartbeat', messageType: StdMsgsString());
+      final msg = StdMsgsString()..value = 'flutglove';
+      _rosTimers.add(Timer.periodic(const Duration(seconds: 1), (_) => hb.publish(msg)));
+    } catch (e) {
+      debugPrint('heartbeat publisher failed: $e');
+    }
+    _hub = RclHub(ros.DynamicTopicHub(_node)..refreshGraph());
+    _hubInited = true;
+    _rosTimers.add(Timer.periodic(const Duration(milliseconds: 16), (_) => _hub.spinOnce()));
+    _rosTimers.add(Timer.periodic(const Duration(milliseconds: 1200), (_) {
+      _hub.refreshGraph();
+      _layout.update();
+    }));
+    _rosReady = true;
+  } catch (e, st) {
+    _rosError = '$e';
+    debugPrint('rcldart init failed: $e\n$st');
+  }
+  _connRev.value++;
+}
+
+/// Applies edited connection settings live: persist, tear down rcl, bring it
+/// back up with the new domain/peers.
+Future<void> _reconnect(ConnConfig c) async {
+  _conn
+    ..domainId = c.domainId
+    ..peers = c.peers
+    ..transport = c.transport;
+  await _conn.save();
+  await _bringUpRos();
+  _layout.update();
 }
 
 class FlutgloveApp extends StatelessWidget {
@@ -283,38 +510,129 @@ class FlutgloveApp extends StatelessWidget {
   }
 }
 
+// Shown when rcl didn't come up (no ROS runtime closure bundled yet). The app
+// still launches — this is the expected first-run state on a device before the
+// ROS .so closure is cross-compiled into jniLibs (see docs/android_support.md).
+class _RosUnavailable extends StatelessWidget {
+  const _RosUnavailable();
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Fx.bg,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.hub, size: 48, color: Fx.accent),
+            const SizedBox(height: 16),
+            const Text('flutglove is running',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            const Text('The Flutter app launched, but the ROS 2 runtime is not '
+                'available on this device yet.',
+                textAlign: TextAlign.center, style: TextStyle(color: Fx.dim)),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: Fx.surface2, borderRadius: BorderRadius.circular(8)),
+              child: Text(
+                'Bundle the cross-compiled ROS 2 closure into the APK jniLibs\n'
+                '(tool/build_ros2_android.sh → jniLibs/<abi>) or set\n'
+                'RCLDART_ROS_BUNDLE_URL to auto-fetch it. See\n'
+                'docs/android_support.md + docs/distribution_pipeline.md.',
+                style: const TextStyle(
+                    fontFamily: 'monospace', fontSize: 11.5, color: Fx.text)),
+            ),
+            if (_rosError != null) ...[
+              const SizedBox(height: 12),
+              Text(_rosError!,
+                  textAlign: TextAlign.center,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 10.5, color: Colors.redAccent)),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
 class FlutgloveHome extends StatelessWidget {
   const FlutgloveHome({super.key});
   @override
   Widget build(BuildContext context) {
+    // Rebuild the ROS-ready gate whenever a (re)connect happens.
+    return ValueListenableBuilder<int>(
+      valueListenable: _connRev,
+      builder: (_, __, ___) => _rosReady ? _shell() : const _RosUnavailable(),
+    );
+  }
+
+  Widget _shell() {
     return Scaffold(
-      body: Column(children: [
-        const _TopBar(),
-        Container(height: 1, color: Fx.border),
-        Expanded(
-          child: Row(children: [
-            const _SideRail(),
-            ValueListenableBuilder<int>(
-              valueListenable: _sidebarTab,
-              builder: (_, tab, __) => tab < 0
-                  ? const SizedBox.shrink()
-                  : SizedBox(width: 270, child: _SidePanel(tab: tab)),
-            ),
-            Container(width: 1, color: Fx.border),
-            Expanded(
-              child: AnimatedBuilder(
-                animation: _layout,
-                builder: (_, __) => Padding(
-                  padding: const EdgeInsets.all(3),
-                  child: _buildNode(_layout.root),
+      body: SafeArea(
+        child: Column(children: [
+          const _TopBar(),
+          Container(height: 1, color: Fx.border),
+          Expanded(
+            // Responsive: on a wide screen (desktop / phone-landscape / tablet)
+            // the topic sidebar sits INLINE beside the mosaic; on a narrow
+            // screen (phone-portrait) it would squeeze the panels and overflow,
+            // so it floats as an OVERLAY over a full-width mosaic instead.
+            child: LayoutBuilder(builder: (context, c) {
+              final compact = c.maxWidth < 720;
+              return Row(children: [
+                const _SideRail(),
+                Container(width: 1, color: Fx.border),
+                Expanded(
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _sidebarTab,
+                    builder: (_, tab, __) {
+                      final mosaic = AnimatedBuilder(
+                        animation: _layout,
+                        builder: (_, __) => Padding(
+                          padding: const EdgeInsets.all(3),
+                          child: _buildNode(_layout.root),
+                        ),
+                      );
+                      if (tab < 0) return mosaic;
+                      if (compact) {
+                        return Stack(children: [
+                          Positioned.fill(child: mosaic),
+                          Positioned.fill(
+                            child: GestureDetector(
+                              onTap: () => _sidebarTab.value = -1,
+                              child: Container(color: Colors.black.withValues(alpha: 0.5)),
+                            ),
+                          ),
+                          Positioned(
+                            left: 0, top: 0, bottom: 0,
+                            width: math.min(320, c.maxWidth * 0.86),
+                            child: Material(
+                              elevation: 8,
+                              color: Fx.surface,
+                              child: _SidePanel(tab: tab),
+                            ),
+                          ),
+                        ]);
+                      }
+                      return Row(children: [
+                        SizedBox(width: 270, child: _SidePanel(tab: tab)),
+                        Container(width: 1, color: Fx.border),
+                        Expanded(child: mosaic),
+                      ]);
+                    },
+                  ),
                 ),
-              ),
-            ),
-          ]),
-        ),
-        Container(height: 1, color: Fx.border),
-        const _StatusBar(),
-      ]),
+              ]);
+            }),
+          ),
+          Container(height: 1, color: Fx.border),
+          const _StatusBar(),
+        ]),
+      ),
     );
   }
 
@@ -945,6 +1263,9 @@ class _TopBar extends StatelessWidget {
   const _TopBar();
   @override
   Widget build(BuildContext context) {
+    // Collapse button labels + the subtitle chip on narrow screens so the bar
+    // never overflows on a phone (portrait or landscape notch area).
+    final compact = MediaQuery.sizeOf(context).width < 560;
     return Container(
       height: 46,
       color: Fx.rail,
@@ -954,21 +1275,27 @@ class _TopBar extends StatelessWidget {
         const SizedBox(width: 8),
         const Text('flutglove',
             style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-        const SizedBox(width: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-              color: Fx.surface2, borderRadius: BorderRadius.circular(4)),
-          child: const Text('rcldart · ros_cdr',
-              style: TextStyle(fontSize: 10, color: Fx.dim)),
-        ),
+        if (!compact) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+                color: Fx.surface2, borderRadius: BorderRadius.circular(4)),
+            child: const Text('rcldart · ros_cdr',
+                style: TextStyle(fontSize: 10, color: Fx.dim)),
+          ),
+        ],
         const Spacer(),
-        _TopBtn(Icons.add, 'Add a panel', label: 'Add panel', accent: true,
-            onTap: () async {
+        _TopBtn(Icons.lan_outlined, 'ROS connection (domain + peer IPs)',
+            label: compact ? null : 'Connection',
+            onTap: () => showConnectionSettings(context)),
+        const SizedBox(width: 6),
+        _TopBtn(Icons.add, 'Add a panel', label: compact ? null : 'Add panel',
+            accent: true, onTap: () async {
           final t = await showPanelPicker(context);
           if (t != null) _layout.addPanel(t);
         }),
-        const SizedBox(width: 8),
+        const SizedBox(width: 2),
         _TopBtn(Icons.save_outlined, 'Save layout', onTap: () async {
           await _layout.save();
           if (context.mounted) {
@@ -1278,24 +1605,42 @@ class _StatusBarState extends State<_StatusBar> {
 
   @override
   Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 560;
     return Container(
       height: 24,
       color: Fx.rail,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       child: Row(children: [
-        const Icon(Icons.circle, size: 8, color: Fx.ok),
-        const SizedBox(width: 5),
-        _txt('Connected', Fx.ok),
-        _sep(),
-        _txt('domain $_domainId'),
-        _sep(),
-        _txt('cyclonedds'),
-        _sep(),
-        _txt('${_hub.graph.length} topics'),
-        _sep(),
-        _txt('$_rate msg/s'),
-        const Spacer(),
-        _txt('flutglove · rcldart FFI'),
+        // Leading status scrolls horizontally so a long peer list never
+        // overflows on a narrow phone.
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            reverse: true,
+            child: Row(children: [
+              const Icon(Icons.circle, size: 8, color: Fx.ok),
+              const SizedBox(width: 5),
+              _txt('Connected', Fx.ok),
+              _sep(),
+              _txt('domain ${_conn.domainId}'),
+              _sep(),
+              _txt(switch (_conn.transport) {
+                'foxglove' => 'foxglove${_conn.peers.isEmpty ? "" : ": ${_conn.peers.first}"}',
+                'cyclonedds' => 'cyclonedds (direct DDS)',
+                'zenoh' => 'zenoh${_conn.peers.isEmpty ? "" : ": ${_conn.peers.join(", ")}"}',
+                _ => (_conn.peers.isEmpty ? 'rcl-dds' : 'peers: ${_conn.peers.join(", ")}'),
+              }),
+              _sep(),
+              _txt('${_hub.topicCount} topics'),
+              _sep(),
+              _txt('$_rate msg/s'),
+            ]),
+          ),
+        ),
+        if (wide) ...[
+          const SizedBox(width: 8),
+          _txt('flutglove · rcldart FFI'),
+        ],
       ]),
     );
   }
@@ -1336,7 +1681,7 @@ class _TopicPickerDialogState extends State<_TopicPickerDialog> {
               autofocus: true,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                hintText: 'Search ${_hub.graph.length} topics…',
+                hintText: 'Search ${_hub.topicCount} topics…',
                 prefixIcon: const Icon(Icons.search, size: 18),
                 filled: true,
                 fillColor: Fx.surface2,
@@ -1399,3 +1744,161 @@ Future<String?> showPanelPicker(BuildContext context) => showDialog<String>(
         ),
       ),
     );
+
+// ---- ROS connection settings (editable domain + peer IPs) ------------------
+Future<void> showConnectionSettings(BuildContext context) => showDialog<void>(
+      context: context,
+      builder: (_) => const _ConnectionDialog(),
+    );
+
+class _ConnectionDialog extends StatefulWidget {
+  const _ConnectionDialog();
+  @override
+  State<_ConnectionDialog> createState() => _ConnectionDialogState();
+}
+
+class _ConnectionDialogState extends State<_ConnectionDialog> {
+  late final TextEditingController _domain =
+      TextEditingController(text: '${_conn.domainId}');
+  late final TextEditingController _peers =
+      TextEditingController(text: _conn.peers.join('\n'));
+  bool _busy = false;
+  late String _transport = _conn.transport;
+
+  bool get _zenoh => _transport == 'zenoh';
+  bool get _foxglove => _transport == 'foxglove';
+  bool get _cyclone => _transport == 'cyclonedds';
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Fx.surface,
+      child: SizedBox(
+        width: 460,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: const [
+              Icon(Icons.lan_outlined, color: Fx.accent, size: 20),
+              SizedBox(width: 8),
+              Text('ROS 2 connection', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            ]),
+            const SizedBox(height: 12),
+            // Transport: native DDS · Zenoh router · Foxglove WebSocket bridge.
+            SegmentedButton<String>(
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'dds', label: Text('rcl'), icon: Icon(Icons.wifi_tethering, size: 14)),
+                ButtonSegment(value: 'cyclonedds', label: Text('CycloneDDS'), icon: Icon(Icons.lan, size: 14)),
+                ButtonSegment(value: 'zenoh', label: Text('Zenoh'), icon: Icon(Icons.router, size: 14)),
+                ButtonSegment(value: 'foxglove', label: Text('Foxglove'), icon: Icon(Icons.hub, size: 14)),
+              ],
+              selected: {_transport},
+              onSelectionChanged: (s) => setState(() => _transport = s.first),
+            ),
+            const SizedBox(height: 16),
+            if (!_foxglove) ...[
+              const Text('ROS_DOMAIN_ID', style: TextStyle(fontSize: 11, color: Fx.dim)),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _domain,
+                keyboardType: TextInputType.number,
+                decoration: _dec('0'),
+              ),
+              const SizedBox(height: 14),
+            ],
+            Text(
+                _foxglove
+                    ? 'FOXGLOVE BRIDGE (host, host:8765, or ws://host:8765)'
+                    : _zenoh
+                        ? 'ZENOH ROUTER(S) (host or tcp/host:7447)'
+                        : 'PEER HOSTS — one per line (who you discover AND who can see your topics)',
+                style: const TextStyle(fontSize: 11, color: Fx.dim)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _peers,
+              maxLines: _foxglove ? 1 : 4,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              decoration: _dec(_foxglove
+                  ? '192.168.1.229:8765  (emulator: 10.0.2.2:8765)'
+                  : _zenoh
+                      ? '192.168.1.50\ntcp/10.0.2.2:7447'
+                      : '192.168.1.229\n10.0.2.2'),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _foxglove
+                  ? 'Reliable everywhere — one outbound TCP, crosses NAT, needs no '
+                      'bundled ROS. On the computer run: '
+                      '`ros2 run foxglove_bridge foxglove_bridge`. From the emulator '
+                      'use 10.0.2.2:8765; a real phone uses your PC\'s LAN IP.'
+                  : _cyclone
+                      ? 'Direct DDS — no bridge, no WebSocket, no ROS. Links CycloneDDS '
+                          'and discovers the live ROS 2 graph over DCPSPublication, '
+                          'decoding every type with the bundled .msg schemas. Set the '
+                          'domain to match your robot; peers optional on the same LAN.'
+                      : _zenoh
+                          ? 'Zenoh bridge: run `ros2 run rmw_zenoh_cpp rmw_zenohd` on the '
+                              'robot/host, then point here at its IP. One TCP connection '
+                              'to the router surfaces every ROS 2 topic — works through NAT '
+                              '(needs rmw_zenoh_cpp in the closure: WITH_ZENOH=1).'
+                          : 'These are your computer/robot IPs on the same network. On a '
+                              'real phone on the same Wi-Fi this works both ways — you see '
+                              'their topics and they see the ones you publish. NOTE: the '
+                              'Android emulator can\'t reach host DDS over its NAT — use '
+                              'Foxglove there. Empty = local discovery only.',
+              style: const TextStyle(fontSize: 10.5, color: Fx.dim),
+            ),
+            const SizedBox(height: 18),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              TextButton(
+                onPressed: _busy ? null : () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _busy ? null : _apply,
+                child: _busy
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Apply & reconnect'),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _dec(String hint) => InputDecoration(
+        hintText: hint,
+        filled: true,
+        fillColor: Fx.surface2,
+        isDense: true,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+      );
+
+  Future<void> _apply() async {
+    setState(() => _busy = true);
+    final peers = _peers.text
+        .split(RegExp(r'[\s,]+'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final cfg = ConnConfig(
+        domainId: int.tryParse(_domain.text.trim()) ?? 0, peers: peers, transport: _transport);
+    await _reconnect(cfg);
+    if (!mounted) return;
+    Navigator.pop(context);
+    final label = switch (_transport) {
+      'foxglove' => 'Foxglove bridge',
+      'cyclonedds' => 'CycloneDDS (direct)',
+      'zenoh' => 'Zenoh',
+      _ => 'rcl DDS',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_rosReady
+            ? 'Connected via $label${_foxglove ? " (${cfg.foxgloveUrl})" : " — domain ${cfg.domainId}, ${peers.length} peer(s)"}'
+            : 'Connect failed — ${_rosError ?? "check the ROS runtime"}')));
+  }
+}

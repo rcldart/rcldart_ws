@@ -1,0 +1,51 @@
+name: dds_direct
+description: >-
+  Bridgeless ROS 2 client as a Flutter FFI plugin: links CycloneDDS (built from
+  source by the plugin, no ROS install) and serializes messages in pure Dart via
+  ros2_cdr. Add it from pub.dev and the native DDS layer builds automatically.
+version: 0.1.0
+homepage: https://github.com/harunkurtdev/rcldart
+repository: https://github.com/harunkurtdev/rcldart
+issue_tracker: https://github.com/harunkurtdev/rcldart/issues
+
+topics:
+  - ros2
+  - dds
+  - cyclonedds
+  - robotics
+  - ffi
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  test: ^1.24.0
+
+flutter:
+  # Bundled ROS 2 .msg schema registry (concatenated ros2msg per type) so the
+  # DDS transport can decode any discovered type with no ROS on-device.
+  assets:
+    - assets/ros_schemas.json
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true

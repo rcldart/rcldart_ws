@@ -1,0 +1,28 @@
+name: flutglove_zenoh
+description: >-
+  A minimal ROS 2 subscribe+publish frontend over ZENOH (zenoh_ros2 + ros2_cdr).
+  Same tabbed architecture as flutglove_dds, but the transport is Zenoh via a
+  zenoh-bridge-ros2dds — one outbound TCP, NAT-friendly, no ROS install.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
+  zenoh_ros2:
+    path: ../zenoh_ros2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/ros_schemas.json
