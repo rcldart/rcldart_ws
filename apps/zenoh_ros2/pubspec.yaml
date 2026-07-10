@@ -22,12 +22,25 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Pulled from GitHub — no workspace checkout needed.
   ros2_cdr:
-    path: ../../dart/ros2_cdr
+    git:
+      url: https://github.com/rcldart/rcldart_ws.git
+      path: dart/ros2_cdr
+      ref: main
   zenoh_ffi:
-    path: ../../../zenoh_ffi
+    git:
+      url: https://github.com/harunkurtdev/zenoh_ffi.git
+      ref: master
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+
+# Local workspace dev; delete to build purely from GitHub.
+dependency_overrides:
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
+  zenoh_ffi:
+    path: ../../../zenoh_ffi

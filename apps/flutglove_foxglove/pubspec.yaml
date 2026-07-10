@@ -14,12 +14,21 @@ dependencies:
   flutter:
     sdk: flutter
   web_socket_channel: ^3.0.0
+  # Pulled from GitHub — no workspace checkout needed.
   ros2_cdr:
-    path: ../../dart/ros2_cdr
+    git:
+      url: https://github.com/rcldart/rcldart_ws.git
+      path: dart/ros2_cdr
+      ref: main
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+# Local workspace dev; delete to build purely from GitHub.
+dependency_overrides:
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
 
 flutter:
   uses-material-design: true

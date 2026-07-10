@@ -14,8 +14,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Pulled from GitHub — the CycloneDDS layer builds itself, no workspace needed.
+  dds_direct:
+    git:
+      url: https://github.com/rcldart/rcldart_ws.git
+      path: apps/dds_direct
+      ref: main
+
+dependency_overrides:
   dds_direct:
     path: ../dds_direct
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
 
 dev_dependencies:
   flutter_test:

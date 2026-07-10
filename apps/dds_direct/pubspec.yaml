@@ -23,14 +23,24 @@ dependencies:
   flutter:
     sdk: flutter
   ffi: ^2.1.0
+  # Pulled from GitHub so consumers don't need the workspace checked out.
   ros2_cdr:
-    path: ../../dart/ros2_cdr
+    git:
+      url: https://github.com/rcldart/rcldart_ws.git
+      path: dart/ros2_cdr
+      ref: main
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
   test: ^1.24.0
+
+# Local workspace dev uses the on-disk copy; the git source above is what
+# external consumers resolve. Delete this block to build purely from GitHub.
+dependency_overrides:
+  ros2_cdr:
+    path: ../../dart/ros2_cdr
 
 flutter:
   # Bundled ROS 2 .msg schema registry (concatenated ros2msg per type) so the
