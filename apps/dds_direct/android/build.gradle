@@ -42,11 +42,14 @@ android {
     }
 
     defaultConfig {
-        minSdk = 24 // CycloneDDS/rcl need API 24+ (pthread_attr_setinheritsched)
+        // API 28: pthread_attr_setinheritsched (used by CycloneDDS' thread code)
+        // is only DECLARED from android-28 — compile against it (the symbol has
+        // long existed in libc, so the .so still loads on API 24+ devices).
+        minSdk = 28
         externalNativeBuild {
             cmake {
-                // Android has no --no-undefined-friendly ROS runtime; allow it.
-                arguments "-DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE"
+                arguments "-DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE",
+                          "-DANDROID_PLATFORM=android-28"
             }
         }
         ndk {
